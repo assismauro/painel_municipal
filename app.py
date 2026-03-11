@@ -74,6 +74,9 @@ st.markdown("---")
 # -------------------------------------------------------------------
 @st.cache_data(ttl=600)
 def load_municipios():
+    """
+    Carrega a lista de municípios: id e nome formatado como "nome - UF"
+    """
     query = """
     SELECT id, CONCAT(name, ' - ', state) AS display
     FROM adaptabrasil.county
@@ -90,6 +93,11 @@ def load_municipios():
 
 @st.cache_data(ttl=600)
 def load_city_geojson(cidade_id):
+    """
+    Carrega a geometria da cidade e seu centroide, retorna:
+    - lista com uma feature GeoJSON
+    - latitude e longitude do centroide
+    """
     query = f"""
     SELECT 
         id, 
@@ -127,6 +135,11 @@ def load_city_geojson(cidade_id):
 
 @st.cache_data(ttl=600)
 def load_county_data_view(cidade_id):
+    """
+    Carrega os dados da view materializada para o município selecionado.
+    Retorna DataFrame com sep, imageurl, color, value.
+    Ordenado do maior valor para o menor (value DESC).
+    """
     query = f"""
     SELECT sep, imageurl, color, value
     FROM adaptabrasil.mv_adapta_cidades
@@ -199,14 +212,15 @@ with col_esquerda:
                 bearing=0
             )
 
+            # Estilo de mapa público (não requer token)
             deck = pdk.Deck(
                 layers=[geojson_layer],
                 initial_view_state=view_state,
-                map_style="mapbox://styles/mapbox/light-v10",
+                map_style='https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
                 tooltip={"text": "{name}"}
             )
 
-            st.pydeck_chart(deck, use_container_width=True, height=400)
+            st.pydeck_chart(deck, width='stretch', height=400)
         else:
             st.warning("Geometria da cidade não disponível.")
 
