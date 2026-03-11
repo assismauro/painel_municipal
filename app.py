@@ -116,9 +116,9 @@ else:
 
 
 # -------------------------------------------------------------------
-# Funções de carregamento de dados com cache
+# Funções de carregamento de dados com cache (sem spinner do sistema)
 # -------------------------------------------------------------------
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_municipios():
     """
     Carrega a lista de municípios: id, state e nome formatado como "nome - UF"
@@ -138,7 +138,7 @@ def load_municipios():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_anos_para_cidade(cidade_id):
     """
     Retorna lista de anos (valores originais, podendo conter espaços)
@@ -159,7 +159,7 @@ def load_anos_para_cidade(cidade_id):
         return []
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_setores_para_cidade_ano(cidade_id, ano):
     query = f"""
     SELECT DISTINCT sep
@@ -177,7 +177,7 @@ def load_setores_para_cidade_ano(cidade_id, ano):
         return []
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_city_geojson(cidade_id):
     query = f"""
     SELECT 
@@ -215,7 +215,7 @@ def load_city_geojson(cidade_id):
         return [], None, None
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_county_data_view(cidade_id, ano, sep=None):
     """
     Carrega os dados da view para a cidade, ano e setor (opcional).
@@ -245,7 +245,7 @@ def load_county_data_view(cidade_id, ano, sep=None):
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_pie_data(state, year, sep):
     """
     Retorna DataFrame com color, label, order e count de municípios distintos no estado,
