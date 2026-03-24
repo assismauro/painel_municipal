@@ -15,15 +15,25 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS personalizado
+# CSS personalizado com fundo temático de mudanças climáticas
 st.markdown("""
 <style>
-    .main > .block-container {
-        padding-top: 0rem !important;
-        padding-bottom: 0rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
+    /* Fundo da aplicação com gradiente suave de céu a terra */
+    .stApp {
+        background: linear-gradient(145deg, #a8d8ea 0%, #f0f0c0 50%, #d2b48c 100%);
+        background-attachment: fixed;
     }
+    /* Overlay semi-transparente para melhor contraste do conteúdo */
+    .main > .block-container {
+        background-color: rgba(255, 255, 255, 0.85);
+        border-radius: 20px;
+        padding: 1rem 2rem !important;
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        backdrop-filter: blur(3px);
+    }
+    /* Ajustes de padding e borda (mantidos) */
     [data-testid="collapsedControl"] {
         display: none;
     }
@@ -33,6 +43,7 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"] {
         column-gap: 100px !important;
     }
+    /* Tooltip customizado */
     .tooltip-cell {
         position: relative;
         cursor: pointer;
@@ -105,9 +116,9 @@ else:
 
 
 # -------------------------------------------------------------------
-# Funções de carregamento de dados com cache
+# Funções de carregamento de dados com cache (sem spinner do sistema)
 # -------------------------------------------------------------------
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_municipios():
     """
     Carrega a lista de municípios: id, state e nome formatado como "nome - UF"
@@ -127,14 +138,14 @@ def load_municipios():
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_anos_para_cidade(cidade_id):
     """
     Retorna lista de anos (valores originais, podendo conter espaços)
     """
     query = f"""
     SELECT DISTINCT "year"
-    FROM adaptabrasil.mv_adapta_cidades
+    FROM adaptabrasil.mv_painel_municipal
     WHERE county_id = {cidade_id}
     ORDER BY "year";
     """
@@ -148,11 +159,11 @@ def load_anos_para_cidade(cidade_id):
         return []
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_setores_para_cidade_ano(cidade_id, ano):
     query = f"""
     SELECT DISTINCT sep
-    FROM adaptabrasil.mv_adapta_cidades
+    FROM adaptabrasil.mv_painel_municipal
     WHERE county_id = {cidade_id} AND "year" = '{ano}'
     ORDER BY sep;
     """
@@ -166,7 +177,7 @@ def load_setores_para_cidade_ano(cidade_id, ano):
         return []
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_city_geojson(cidade_id):
     query = f"""
     SELECT 
@@ -204,7 +215,7 @@ def load_city_geojson(cidade_id):
         return [], None, None
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_county_data_view(cidade_id, ano, sep=None):
     """
     Carrega os dados da view para a cidade, ano e setor (opcional).
@@ -213,14 +224,14 @@ def load_county_data_view(cidade_id, ano, sep=None):
     if sep and sep != "Selecione o Setor Estratégico desejado":
         query = f"""
         SELECT sep, imageurl, color, value, label, "order"
-        FROM adaptabrasil.mv_adapta_cidades
+        FROM adaptabrasil.mv_painel_municipal
         WHERE county_id = {cidade_id} AND "year" = '{ano}' AND sep = '{sep}'
         ORDER BY value DESC;
         """
     else:
         query = f"""
         SELECT sep, imageurl, color, value, label, "order"
-        FROM adaptabrasil.mv_adapta_cidades
+        FROM adaptabrasil.mv_painel_municipal
         WHERE county_id = {cidade_id} AND "year" = '{ano}'
         ORDER BY value DESC;
         """
@@ -234,7 +245,7 @@ def load_county_data_view(cidade_id, ano, sep=None):
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_pie_data(state, year, sep):
     """
     Retorna DataFrame com color, label, order e count de municípios distintos no estado,
@@ -242,7 +253,7 @@ def load_pie_data(state, year, sep):
     """
     query = f"""
     SELECT color, label, MIN("order") as ord, COUNT(DISTINCT county_id) as count
-    FROM adaptabrasil.mv_adapta_cidades
+    FROM adaptabrasil.mv_painel_municipal
     WHERE state = '{state}' AND "year" = '{year}' AND sep = '{sep}'
     GROUP BY color, label, "order"
     ORDER BY "order";
@@ -291,11 +302,13 @@ with col_esquerda:
         st.warning("Lista de municípios não disponível.")
         selected_display = None
 
-    # Se cidade selecionada, atualizar session_state e carregar anos
+    # Se cidade selecionada, atualizar session_state, resetar setor e carregar anos
     if selected_display:
         cidade_row = df_municipios[df_municipios['display'] == selected_display].iloc[0]
         st.session_state['cidade_id'] = cidade_row['id']
         st.session_state['estado_cidade'] = cidade_row['state']
+        # Resetar setor ao mudar de cidade
+        st.session_state['selected_sep'] = None
 
         with st.spinner("Carregando anos disponíveis..."):
             anos_disponiveis = load_anos_para_cidade(st.session_state['cidade_id'])
@@ -310,7 +323,7 @@ with col_esquerda:
                 label="Selecione o ano",
                 options=anos_disponiveis,
                 index=default_index,
-                format_func=lambda x: x.strip(),  # Remove espaços ao exibir
+                format_func=lambda x: x.strip(),
                 label_visibility="collapsed",
                 placeholder="Escolha um ano",
                 key="ano_select"
@@ -323,6 +336,7 @@ with col_esquerda:
         st.session_state['cidade_id'] = None
         st.session_state['estado_cidade'] = None
         st.session_state['selected_ano'] = None
+        st.session_state['selected_sep'] = None
 
     # Se cidade e ano selecionados, carregar setores
     if st.session_state['cidade_id'] and st.session_state['selected_ano']:
@@ -436,13 +450,13 @@ with col_direita:
                         df_pie,
                         values='count',
                         names='label',
-                        title=f"Distribuição de Municípios no Estado ({st.session_state['estado_cidade']})",
+                        title=f"Posição Relativa do Município no Estado ({st.session_state['estado_cidade']})",
                         color='color',
                         color_discrete_map=color_map,
                         category_orders={"label": df_pie['label'].tolist()}
                     )
                     fig.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("Nenhum dado para o gráfico de pizza.")
         else:
