@@ -107,7 +107,6 @@ with col_title:
     st.markdown("<h1 style='margin: 0; line-height: 1.2;'>Painel Municipal</h1>", unsafe_allow_html=True)
 
 with col_btn:
-    # Função para gerar o PDF em memória
     def generate_pdf():
         buffer = BytesIO()
         c = canvas.Canvas(buffer, pagesize=letter)
@@ -119,7 +118,6 @@ with col_btn:
         buffer.seek(0)
         return buffer.getvalue()
 
-    # Botão de download direto
     st.download_button(
         label="Plano de Adaptação",
         data=generate_pdf(),
@@ -133,9 +131,6 @@ with col_btn:
 # -------------------------------------------------------------------
 @st.cache_data(ttl=600, show_spinner=False)
 def load_municipios():
-    """
-    Carrega a lista de municípios: id, state e nome formatado como "nome - UF"
-    """
     query = """
             SELECT id, state, CONCAT(name, ' - ', state) AS display
             FROM adaptabrasil.county
@@ -153,9 +148,6 @@ def load_municipios():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_anos_para_cidade(cidade_id):
-    """
-    Retorna lista de anos (valores originais, podendo conter espaços)
-    """
     query = f"""
     SELECT DISTINCT "year"
     FROM adaptabrasil.mv_painel_municipal
@@ -230,10 +222,6 @@ def load_city_geojson(cidade_id):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_county_data_view(cidade_id, ano, sep=None):
-    """
-    Carrega os dados da view para a cidade, ano e setor (opcional).
-    Inclui os campos label e order.
-    """
     if sep and sep != "Selecione o Setor Estratégico desejado":
         query = f"""
         SELECT sep, imageurl, color, value, label, "order"
@@ -259,27 +247,144 @@ def load_county_data_view(cidade_id, ano, sep=None):
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_pie_data(state, year, sep):
-    """
-    Retorna DataFrame com color, label, order e count de municípios distintos no estado,
-    para o ano e setor especificados. Agrupado por color, label e order.
-    """
-    query = f"""
-    SELECT color, label, MIN("order") as ord, COUNT(DISTINCT county_id) as count
+@st.cache_data(ttl=600, show_spinner=False)
+def load_ranking_data(cidade_id, ano, sep):
+    # First get the geographic values for the city and year
+    geo_query = f"""
+    SELECT county, state, microregion, mesoregion, region
     FROM adaptabrasil.mv_painel_municipal
-    WHERE state = '{state}' AND "year" = '{year}' AND sep = '{sep}'
-    GROUP BY color, label, "order"
-    ORDER BY "order";
+    WHERE county_id = {cidade_id} AND "year" = '{ano}' AND sep = '{sep}'
+    LIMIT 1;
     """
     try:
         conn = get_connection()
+        geo_df = pd.read_sql(geo_query, conn)
+        if geo_df.empty:
+            conn.close()
+            return pd.DataFrame()
+        county_name = geo_df.iloc[0]['county']
+        state = geo_df.iloc[0]['state']
+        microregion = geo_df.iloc[0]['microregion']
+        mesoregion = geo_df.iloc[0]['mesoregion']
+        region = geo_df.iloc[0]['region']
+    except Exception as e:
+        st.error(f"Erro ao carregar dados geográficos: {e}")
+        conn.close()
+        return pd.DataFrame()
+
+    query = f"""
+    SELECT * FROM (
+        -- País
+        SELECT 
+            0 as orderby,
+            'País' as label,
+            'Brasil' as resolucao,
+            ranking,
+            total_lines
+        FROM (
+            SELECT 
+                county,
+                RANK() OVER (ORDER BY value DESC) AS ranking,
+                COUNT(*) OVER () AS total_lines
+            FROM adaptabrasil.mv_painel_municipal
+            WHERE year = '{ano}'
+              AND sep = '{sep}'
+        ) ranked
+        WHERE county = '{county_name}'
+        UNION
+        -- Estado
+        SELECT 
+            1 as orderby,
+            'Estado' as label,
+            state as resolucao,
+            ranking,
+            total_lines
+        FROM (
+            SELECT 
+                state,
+                county,
+                value,
+                RANK() OVER (ORDER BY value DESC) AS ranking,
+                COUNT(*) OVER () AS total_lines
+            FROM adaptabrasil.mv_painel_municipal
+            WHERE year = '{ano}'
+              AND sep = '{sep}'
+              AND state = '{state}'
+        ) ranked
+        WHERE county = '{county_name}'
+        UNION
+        -- Região
+        SELECT 
+            2 as orderby,
+            'Região' as label,
+            region as resolucao,
+            ranking,
+            total_lines
+        FROM (
+            SELECT 
+                region,
+                county,
+                RANK() OVER (ORDER BY value DESC) AS ranking,
+                COUNT(*) OVER () AS total_lines
+            FROM adaptabrasil.mv_painel_municipal
+            WHERE year = '{ano}' 
+              AND sep = '{sep}'
+              AND region = '{region}'
+        ) ranked
+        WHERE county = '{county_name}'
+        UNION
+        -- Mesorregião
+        SELECT 
+            3 as orderby,
+            'Mesorregião' as label,
+            mesoregion as resolucao,
+            ranking,
+            total_lines
+        FROM (
+            SELECT 
+                mesoregion,
+                county,
+                value,
+                RANK() OVER (ORDER BY value DESC) AS ranking,
+                COUNT(*) OVER () AS total_lines
+            FROM adaptabrasil.mv_painel_municipal
+            WHERE year = '{ano}'
+              AND sep = '{sep}'
+              AND mesoregion = '{mesoregion}'
+        ) ranked
+        WHERE county = '{county_name}'
+        UNION
+        -- Microrregião
+        SELECT 
+            4 as orderby,
+            'Microrregião' as label,
+            microregion as resolucao,
+            ranking,
+            total_lines
+        FROM (
+            SELECT 
+                microregion,
+                county,
+                value,
+                RANK() OVER (ORDER BY value DESC) AS ranking,
+                COUNT(*) OVER () AS total_lines
+            FROM adaptabrasil.mv_painel_municipal
+            WHERE year = '{ano}'
+              AND sep = '{sep}'
+              AND microregion = '{microregion}'
+        ) ranked
+        WHERE county = '{county_name}'
+    ) t
+    ORDER BY orderby;
+    """
+    try:
         df = pd.read_sql(query, conn)
         conn.close()
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar dados do gráfico: {e}")
+        st.error(f"Erro ao carregar dados de ranking: {e}")
+        conn.close()
         return pd.DataFrame()
-
 
 # -------------------------------------------------------------------
 # Carregar lista de municípios (inicial)
@@ -320,18 +425,15 @@ with col_esquerda:
         cidade_row = df_municipios[df_municipios['display'] == selected_display].iloc[0]
         st.session_state['cidade_id'] = cidade_row['id']
         st.session_state['estado_cidade'] = cidade_row['state']
-        # Resetar setor ao mudar de cidade
         st.session_state['selected_sep'] = None
 
         with st.spinner("Carregando anos disponíveis..."):
             anos_disponiveis = load_anos_para_cidade(st.session_state['cidade_id'])
 
         if anos_disponiveis:
-            # Define índice padrão para " Presente" (se existir)
             default_index = 0
             if " Presente" in anos_disponiveis:
                 default_index = anos_disponiveis.index(" Presente")
-            # Usa format_func para remover espaços na exibição
             selected_ano = st.selectbox(
                 label="Selecione o ano",
                 options=anos_disponiveis,
@@ -417,9 +519,36 @@ with col_esquerda:
     elif st.session_state['cidade_id']:
         st.info("Selecione um ano para visualizar o mapa e os dados.")
 
+    # Tabela de ranking (aparece apenas quando setor está selecionado)
+    if (st.session_state['cidade_id'] and
+        st.session_state['selected_ano'] and
+        st.session_state['selected_sep'] and
+        st.session_state['selected_sep'] != "Selecione o Setor Estratégico desejado"):
+        with st.spinner("Carregando ranking..."):
+            df_rank = load_ranking_data(
+                st.session_state['cidade_id'],
+                st.session_state['selected_ano'],
+                st.session_state['selected_sep']
+            )
+        if not df_rank.empty:
+            st.markdown("### Ranking")
+            df_display = df_rank[['label', 'resolucao', 'ranking', 'total_lines']].copy()
+            df_display['ranking/total_lines'] = df_display['ranking'].astype(str) + "/" + df_display['total_lines'].astype(str)
+            df_display = df_display[['label', 'resolucao', 'ranking/total_lines']]
+            rows_html = []
+            for _, row in df_display.iterrows():
+                rows_html.append("<tr>")
+                rows_html.append(f"<td style='padding:8px 12px; border:none; font-family:sans-serif;'>{row['label']}</td>")
+                rows_html.append(f"<td style='padding:8px 12px; border:none; font-family:sans-serif;'>{row['resolucao']}</td>")
+                rows_html.append(f"<td style='padding:8px 12px; border:none; text-align:right; font-family:monospace; font-weight:bold;'>{row['ranking/total_lines']}</td>")
+                rows_html.append("</tr>")
+            html_table = "<div style='max-height:300px; overflow-y:auto;'><table style='border-collapse:collapse; width:100%;'>" + "".join(rows_html) + "</table></div>"
+            st.markdown(html_table, unsafe_allow_html=True)
+        else:
+            st.info("Nenhum dado de ranking disponível para este setor.")
+
 with col_direita:
     if st.session_state['cidade_id'] and st.session_state['selected_ano']:
-        # Tabela de indicadores
         with st.spinner("Carregando indicadores..."):
             df_dados = load_county_data_view(
                 st.session_state['cidade_id'],
@@ -428,51 +557,15 @@ with col_direita:
             )
 
         if not df_dados.empty:
-            # HTML correto para a tabela
-            html = """
-            <div style='max-height: 450px; overflow-y: auto; font-family: sans-serif; margin-top: 20px; padding-bottom: 50px;'>
-                <table style='border-collapse: collapse; border: 0; margin-right: auto;'>
-            """
+            rows = []
             for _, row in df_dados.iterrows():
-                html += "<tr style='border: 0;'>"
-                # Ícone
-                html += f"<td style='padding: 5px 15px 5px 5px; text-align: center; border: none;' class='tooltip-cell' data-tooltip='{row['sep']}'><img src='{row['imageurl']}' width='32' height='32'></td>"
-                # Valor com cor de fundo
-                html += f"<td style='padding: 5px 5px 5px 10px; text-align: left; font-family: \"Courier New\", monospace; font-weight: bold; background-color: {row['color']}; border-radius: 4px; line-height: 32px; border: none;' class='tooltip-cell' data-tooltip='{row['sep']}'>{row['value']:.3f}</td>"
-                # Label
-                html += f"<td style='padding: 5px 10px 5px 15px; text-align: left; font-family: sans-serif; border: none;'>{row['label']}</td>"
-                html += "</tr>"
-            html += """
-                </table>
-            </div>
-            """
+                rows.append("<tr style='border: 0;'>")
+                rows.append(f"<td style='padding: 5px 15px 5px 5px; text-align: center; border: none;' class='tooltip-cell' data-tooltip='{row['sep']}'><img src='{row['imageurl']}' width='32' height='32'></td>")
+                rows.append(f"<td style='padding: 5px 5px 5px 10px; text-align: left; font-family: \"Courier New\", monospace; font-weight: bold; background-color: {row['color']}; border-radius: 4px; line-height: 32px; border: none;' class='tooltip-cell' data-tooltip='{row['sep']}'>{row['value']:.3f}</td>")
+                rows.append(f"<td style='padding: 5px 10px 5px 15px; text-align: left; font-family: sans-serif; border: none;'>{row['label']}</td>")
+                rows.append("</tr>")
+            html = "<div style='max-height: 450px; overflow-y: auto; font-family: sans-serif; margin-top: 20px; padding-bottom: 50px;'><table style='border-collapse: collapse; border: 0; margin-right: auto;'>" + "".join(rows) + "</table></div>"
             st.markdown(html, unsafe_allow_html=True)
-
-            # Gráfico de pizza (se um setor específico foi selecionado)
-            if (st.session_state['selected_sep'] and
-                    st.session_state['selected_sep'] != "Selecione o Setor Estratégico desejado"):
-                with st.spinner("Carregando gráfico..."):
-                    df_pie = load_pie_data(
-                        st.session_state['estado_cidade'],
-                        st.session_state['selected_ano'],
-                        st.session_state['selected_sep']
-                    )
-                if not df_pie.empty:
-                    # Mapear cada cor para ela mesma (para colorir as fatias)
-                    color_map = {color: color for color in df_pie['color'].unique()}
-                    fig = px.pie(
-                        df_pie,
-                        values='count',
-                        names='label',
-                        title=f"Posição Relativa do Município no Estado ({st.session_state['estado_cidade']})",
-                        color='color',
-                        color_discrete_map=color_map,
-                        category_orders={"label": df_pie['label'].tolist()}
-                    )
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig, width='stretch')
-                else:
-                    st.info("Nenhum dado para o gráfico de pizza.")
         else:
             st.info("Nenhum dado disponível para este município no ano e setor selecionados.")
     else:
